@@ -182,8 +182,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                         }
                         // Get new Instance ID token
                         token = task.getResult().getToken();
-                        roomId = android_id+"token="+token;
-                        showQR(roomId);
+                        roomId = android_id + "token=" + token;
+                        showQR();
 //                        Log.e("TOKEN", "getInstanceId " + token);
 
                         // Log and toast
@@ -212,10 +212,9 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
 //      device Id
 
-        android_id = Settings.Secure.getString(this.getContentResolver(),
-                Settings.Secure.ANDROID_ID);
+        android_id = Settings.Secure.getString(this.getContentResolver(), Settings.Secure.ANDROID_ID);
 //        if (generatePushToken() == null) {
-            generatePushToken();
+        generatePushToken();
 //            Log.e("FCM Token", "Token " + token);
 //        }
         setTokenInterface(this);
@@ -420,8 +419,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
 
     @SuppressLint("SetTextI18n")
-    void showQR(String roomId) {
-
+    void showQR() {
         if (roomId.length() > 0) {
             Log.e("Show QRCODE", "\nRoom ID: " + roomId);
             WindowManager manager = (WindowManager) getSystemService(WINDOW_SERVICE);
@@ -779,6 +777,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         return new Room.Listener() {
             @Override
             public void onConnected(Room room) {
+
                 localParticipant = room.getLocalParticipant();
                 videoStatusTextView.setText("Connected to " + room.getName());
                 setTitle(room.getName());
@@ -787,12 +786,14 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     addRemoteParticipant(remoteParticipant);
                     break;
                 }
+                dialog.dismiss();
             }
 
             @Override
             public void onReconnecting(@NonNull Room room, @NonNull TwilioException twilioException) {
                 videoStatusTextView.setText("Reconnecting to " + room.getName());
-                reconnectingProgressBar.setVisibility(View.VISIBLE);
+                reconnectingProgressBar.setVisibility(View.GONE);
+                showQR();
             }
 
             @Override
@@ -821,12 +822,13 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     intializeUI();
                     moveLocalVideoToPrimaryView();
                 }
+                if (!dialog.isShowing()) {
+                    showQR();
+                }
             }
-
             @Override
             public void onParticipantConnected(Room room, RemoteParticipant remoteParticipant) {
                 addRemoteParticipant(remoteParticipant);
-
             }
 
             @Override
