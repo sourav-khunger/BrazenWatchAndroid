@@ -35,7 +35,6 @@ public class MainActivity extends AppCompatActivity {
                 Settings.Secure.ANDROID_ID);
         Log.e("faf", "onCreate: " + android_id);
 //        generatePushToken();
-
     }
 
     public String generatePushToken() {

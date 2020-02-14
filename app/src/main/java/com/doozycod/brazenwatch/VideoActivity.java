@@ -2,20 +2,41 @@ package com.doozycod.brazenwatch;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.IntentSender;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Point;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkInfo;
+import android.net.wifi.ScanResult;
+import android.net.wifi.SupplicantState;
+import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
+import android.telephony.CellInfo;
+import android.telephony.CellInfoLte;
+import android.telephony.PhoneStateListener;
+import android.telephony.SignalStrength;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.view.Display;
 import android.view.KeyEvent;
@@ -27,6 +48,7 @@ import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -38,6 +60,17 @@ import androidx.core.content.ContextCompat;
 
 import com.doozycod.brazenwatch.dialog.Dialog;
 import com.doozycod.brazenwatch.util.JWTUtils;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.PendingResult;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.common.api.Status;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.LocationSettingsRequest;
+import com.google.android.gms.location.LocationSettingsResult;
+import com.google.android.gms.location.LocationSettingsStatusCodes;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -45,6 +78,11 @@ import com.google.android.material.snackbar.Snackbar;
 import com.google.firebase.iid.FirebaseInstanceId;
 import com.google.firebase.iid.InstanceIdResult;
 import com.google.zxing.WriterException;
+import com.karumi.dexter.Dexter;
+import com.karumi.dexter.MultiplePermissionsReport;
+import com.karumi.dexter.PermissionToken;
+import com.karumi.dexter.listener.PermissionRequest;
+import com.karumi.dexter.listener.multi.MultiplePermissionsListener;
 import com.twilio.video.AudioCodec;
 import com.twilio.video.CameraCapturer;
 import com.twilio.video.CameraCapturer.CameraSource;
@@ -77,6 +115,9 @@ import com.twilio.video.Vp8Codec;
 import com.twilio.video.Vp9Codec;
 
 import java.util.Collections;
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import androidmads.library.qrgenearator.QRGContents;
 import androidmads.library.qrgenearator.QRGEncoder;
@@ -84,9 +125,10 @@ import androidmads.library.qrgenearator.QRGEncoder;
 import static com.doozycod.brazenwatch.MyFirebaseMessagingService.setTokenInterface;
 import static com.doozycod.brazenwatch.util.JWTUtils.setJWTUTils;
 
-public class VideoActivity extends AppCompatActivity implements OnTokenReceive, OnRoomDecoded {
+public class VideoActivity extends AppCompatActivity implements OnTokenReceive, OnRoomDecoded, LocationListener {
     private static final int CAMERA_MIC_PERMISSION_REQUEST_CODE = 1;
     private static final String TAG = "VideoActivity";
+    protected static final int REQUEST_CHECK_SETTINGS = 0x1;
 
 
     /*
@@ -169,7 +211,20 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     String roomId = null;
     Bitmap bitmap;
     android.app.Dialog dialog;
+    android.app.Dialog statsDialog;
+    private TelephonyManager telephonyManager;
+    Timer timer = new Timer();
+    private final int interval = 1000 * 60; // 60 Seconds
+    int LTESingalStrength = 0;
     private String android_id;
+    private String batLevel, batteryTemperature, wifiSignalLevel, LTESignal;
+    TextView tv_bat_lvl, tv_bat_temp, tv_wifi_signal, tv_net_signal, versioncode, setversionCode, signalStrengthTxt;
+    protected LocationManager locationManager;
+    String ssid;
+    String networkSSID = "Doozycod";
+    WifiManager wifiManager;
+    List<ScanResult> getWifiSSIDs;
+    WifiInfo wifiInfo;
 
     public String generatePushToken() {
         FirebaseInstanceId.getInstance().getInstanceId()
@@ -184,15 +239,13 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                         token = task.getResult().getToken();
                         roomId = android_id + "token=" + token;
                         showQR();
-//                        Log.e("TOKEN", "getInstanceId " + token);
-
-                        // Log and toast
 
                     }
                 });
         return token;
     }
 
+    @SuppressLint("MissingPermission")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -203,6 +256,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         videoStatusTextView = findViewById(R.id.video_status_textview);
         reconnectingProgressBar = findViewById(R.id.reconnecting_progress_bar);
         dialog = new android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        statsDialog = new android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
 
         connectActionFab = findViewById(R.id.connect_action_fab);
         switchCameraActionFab = findViewById(R.id.switch_camera_action_fab);
@@ -211,14 +265,55 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
 
 //      device Id
-
         android_id = Settings.Secure.getString(this.getContentResolver(), Settings.Secure.ANDROID_ID);
+
+//        register broadcast receiver for battery lvl & temp
+        this.registerReceiver(this.mBatInfoReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        this.registerReceiver(this.mBatInfoTemp, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+
+        telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+
+        checkPlayServices();
+        // Listener for the signal strength.
+        final PhoneStateListener mListener = new PhoneStateListener() {
+            @Override
+            public void onSignalStrengthsChanged(SignalStrength sStrength) {
+//                signalStrength = sStrength;
+                getLTEsignalStrength();
+            }
+        };
+
+        // Register the listener for the telephony manager
+        telephonyManager.listen(mListener, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS);
 //        if (generatePushToken() == null) {
         generatePushToken();
+        Dexter.withActivity(this).withPermissions(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.CAMERA,
+                Manifest.permission.READ_CONTACTS,
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+        ).withListener(new MultiplePermissionsListener() {
+            @Override
+            public void onPermissionsChecked(MultiplePermissionsReport report) {
+
+//        get location manager
+                locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 10, VideoActivity.this);
+                /* ... */
+            }
+
+            @Override
+            public void onPermissionRationaleShouldBeShown(List<PermissionRequest> permissions, PermissionToken token) {/* ... */}
+        }).check();
 //            Log.e("FCM Token", "Token " + token);
 //        }
         setTokenInterface(this);
         setJWTUTils(this);
+        displayLocationSettingsRequest(this);
         /*
          * Get shared preferences to read settings
          */
@@ -228,7 +323,6 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
          * Enable changing the volume using the up/down keys during a conversation
          */
         setVolumeControlStream(AudioManager.STREAM_VOICE_CALL);
-
         /*
          * Needed for setting/abandoning audio focus during call
          */
@@ -249,6 +343,301 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
          * Set the initial state of the UI
          */
         intializeUI();
+    }
+
+    private void displayLocationSettingsRequest(Context context) {
+        GoogleApiClient googleApiClient = new GoogleApiClient.Builder(context)
+                .addApi(LocationServices.API).build();
+        googleApiClient.connect();
+
+        LocationRequest locationRequest = LocationRequest.create();
+        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+        locationRequest.setInterval(10000);
+        locationRequest.setFastestInterval(10000 / 2);
+
+        LocationSettingsRequest.Builder builder = new LocationSettingsRequest.Builder().addLocationRequest(locationRequest);
+        builder.setAlwaysShow(true);
+
+        PendingResult<LocationSettingsResult> result = LocationServices.SettingsApi.checkLocationSettings(googleApiClient, builder.build());
+        result.setResultCallback(new ResultCallback<LocationSettingsResult>() {
+            @Override
+            public void onResult(LocationSettingsResult result) {
+                final Status status = result.getStatus();
+                switch (status.getStatusCode()) {
+                    case LocationSettingsStatusCodes.SUCCESS:
+                        Log.i(TAG, "All location settings are satisfied.");
+                        break;
+                    case LocationSettingsStatusCodes.RESOLUTION_REQUIRED:
+                        Log.i(TAG, "Location settings are not satisfied. Show the user a dialog to upgrade location settings ");
+
+                        try {
+                            // Show the dialog by calling startResolutionForResult(), and check the result
+                            // in onActivityResult().
+                            status.startResolutionForResult(VideoActivity.this, REQUEST_CHECK_SETTINGS);
+                        } catch (IntentSender.SendIntentException e) {
+                            Log.i(TAG, "PendingIntent unable to execute request.");
+                        }
+                        break;
+                    case LocationSettingsStatusCodes.SETTINGS_CHANGE_UNAVAILABLE:
+                        Log.i(TAG, "Location settings are inadequate, and cannot be fixed here. Dialog not created.");
+                        break;
+                }
+            }
+        });
+    }
+
+    //    network callback when Internet/network is available
+    private ConnectivityManager.NetworkCallback connectivityCallback
+            = new ConnectivityManager.NetworkCallback() {
+        @Override
+        public void onAvailable(Network network) {
+//            isConnected = true;
+//            startActivity(new Intent(VideoActivity.this, AppRTCMainActivity.class));
+//            finish();
+            Log.e("TAG_INTERNET", "INTERNET CONNECTED");
+        }
+
+        @Override
+        public void onLost(Network network) {
+//            isConnected = false;
+            showConnectionError();
+            Log.e("TAG_INTERNET", "INTERNET LOST");
+        }
+    };
+
+    //    show Connection error when Internet is not available
+    public void showConnectionError() {
+        android.app.Dialog dialog = new android.app.Dialog(this, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen);
+        dialog.setContentView(R.layout.showerror_conenction);
+        RelativeLayout show_error = dialog.findViewById(R.id.show_error);
+        signalStrengthTxt = dialog.findViewById(R.id.signals);
+        dialog.show();
+
+
+        /*if (monitoringConnectivity) {
+            final ConnectivityManager connectivityManager
+                    = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            connectivityManager.unregisterNetworkCallback(connectivityCallback);
+            monitoringConnectivity = false;
+        }*/
+//        show_error.setOnClickListener(new View.OnClickListener() {
+//            @Override
+//            public void onClick(View view) {
+//                finish();
+//
+//                startActivity(new Intent(CallActivity.this, AppRTCMainActivity.class));
+//            }
+//        });
+    }
+
+    void showStats() {
+        statsDialog.setContentView(R.layout.stats_dialog);
+        statsDialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        tv_bat_lvl = statsDialog.findViewById(R.id.batlvlsocket);
+//        bgColorStats = statsDialog.findViewById(R.id.background);
+        tv_bat_temp = statsDialog.findViewById(R.id.batTempsocket);
+        tv_net_signal = statsDialog.findViewById(R.id.networksignalsocket);
+        versioncode = statsDialog.findViewById(R.id.versioncode);
+        tv_wifi_signal = statsDialog.findViewById(R.id.wifisignalsocket);
+        statsDialog.show();
+        versioncode.setText("v" + BuildConfig.VERSION_CODE);
+        tv_bat_lvl.setText(batLevel);
+        tv_bat_temp.setText(batteryTemperature);
+        tv_wifi_signal.setText(wifiSignalLevel);
+        tv_net_signal.setText(LTESignal);
+
+        statsDialog.setOnKeyListener(new DialogInterface.OnKeyListener() {
+            @Override
+            public boolean onKey(DialogInterface dialog, int keyCode, KeyEvent event) {
+                // Prevent dialog close on back press button
+                return keyCode == KeyEvent.KEYCODE_BACK;
+            }
+        });
+        timer.scheduleAtFixedRate(new TimerTask() {
+
+            @Override
+            public void run() {
+
+                runOnUiThread(new Runnable() {
+
+                    @Override
+                    public void run() {
+                        // Stuff that updates the UI
+
+                        tv_bat_lvl.setText(batLevel);
+                        tv_bat_temp.setText(batteryTemperature);
+                        tv_wifi_signal.setText(wifiSignalLevel);
+                        if (LTESignal == null) {
+                            LTESignal = "No Signal";
+                            tv_net_signal.setText(LTESignal);
+                        } else {
+                            tv_net_signal.setText(LTESignal);
+                        }
+
+                    }
+                });
+            }
+
+        }, 0, interval);
+    }
+
+    //    get wifi list to connect server to same network
+    void wifiCheck() {
+        wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        wifiManager.startScan();
+        ConnectivityManager connManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo mWifi = connManager.getNetworkInfo(ConnectivityManager.TYPE_WIFI);
+
+//        wifi info and wifi SSID
+        wifiInfo = wifiManager.getConnectionInfo();
+        if (wifiInfo.getSupplicantState() == SupplicantState.COMPLETED) {
+            ssid = wifiInfo.getSSID();
+        }
+
+        if (mWifi.isConnected()) {
+            if (getWifiSSIDs != null) {
+                for (int i = 0; i < getWifiSSIDs.size(); i++) {
+                    if (getWifiSSIDs.get(i).SSID.equals(networkSSID)) {
+                        Log.e(TAG, "wifiCheck: BSSID " + getWifiSSIDs.get(i).BSSID);
+                    } else {
+                        /*if (!sharedPreferenceMethod.getWifiSSID().equals("")) {
+                            connectToWifi(sharedPreferenceMethod.getWifiSSID(), sharedPreferenceMethod.getWifiPassword());
+                        }*/
+                    }
+                }
+            } else {
+                registerReceiver(mWifiScanReceiver,
+                        new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
+            }
+        } else {
+            registerReceiver(mWifiScanReceiver,
+                    new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
+        }
+
+    }
+
+    //    connect to wifi if available using network ssid and network password
+    void connectToWifi(String networkSSID, String networkPass) {
+        WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+        WifiConfiguration wifiConfig = new WifiConfiguration();
+        wifiConfig.SSID = String.format("\"%s\"", networkSSID);
+        wifiConfig.preSharedKey = String.format("\"%s\"", networkPass);
+
+        boolean wifiEnabled = wifiManager.isWifiEnabled();
+        if (!wifiEnabled) {
+            wifiManager.setWifiEnabled(true);
+        }
+//        remember id
+        int netId = wifiManager.addNetwork(wifiConfig);
+        wifiManager.disconnect();
+        wifiManager.enableNetwork(netId, true);
+        wifiManager.reconnect();
+    }
+
+    //    wifi names list receiver
+    private final BroadcastReceiver mWifiScanReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent intent) {
+            if (intent.getAction().equals(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)) {
+                List<ScanResult> mScanResults = wifiManager.getScanResults();
+                getWifiSSIDs = mScanResults;
+                for (int i = 0; i < mScanResults.size(); i++) {
+//                    Log.e(" Network ID", "wifi in range: " + getWifiSSIDs.get(i).SSID);
+                }
+            }
+        }
+    };
+    //    Receive for Battery Info
+    private BroadcastReceiver mBatInfoReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context ctxt, Intent intent) {
+            int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 0);
+            batLevel = level + "%";
+            if (level < 20) {
+                Toast.makeText(VideoActivity.this, "Battery low, charge device to continue.", Toast.LENGTH_SHORT).show();
+            }
+            getWifiSignal();
+        }
+    };
+
+    //    wifi signal level
+    private void getWifiSignal() {
+        WifiManager wifiManager = (WifiManager) this.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        int numberOfLevels = 5;
+        WifiInfo wifiInfo = wifiManager.getConnectionInfo();
+        int level = WifiManager.calculateSignalLevel(wifiInfo.getRssi(), numberOfLevels);
+        Log.d(TAG, "getWifiSignal: " + level + "");
+        if (level <= 5 && level >= 4) {
+            //Best signal
+            wifiSignalLevel = "Very Good";
+
+        } else if (level < 4 && level >= 3) {
+            //Good signal
+            wifiSignalLevel = "Good";
+        } else if (level < 3 && level >= 2) {
+            //Low signal
+            wifiSignalLevel = "Low";
+
+        } else if (level < 2 && level >= 1) {
+            //Very weak signal
+            wifiSignalLevel = "Very Low";
+        } else {
+            // no signals
+            wifiSignalLevel = "No Wifi Signal";
+        }
+    }
+
+    //    Receive Temperature
+    private BroadcastReceiver mBatInfoTemp = new BroadcastReceiver() {
+        float temp = 0;
+
+        @Override
+        public void onReceive(Context ctxt, Intent intent) {
+            temp = ((float) intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)) / 10;
+            batteryTemperature = temp + " C";
+
+        }
+    };
+
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
+    private void getLTEsignalStrength() {
+        try {
+            @SuppressLint("MissingPermission") List<CellInfo> cellInfoList = telephonyManager.getAllCellInfo();
+            for (CellInfo cellInfo : cellInfoList) {
+                if (cellInfo instanceof CellInfoLte) {
+                    // cast to CellInfoLte and call all the CellInfoLte methods you need
+                    CellInfoLte ci = (CellInfoLte) cellInfo;
+                    Log.e("", "LTE signal strength:  " + ci.getCellSignalStrength().getDbm());
+                    LTESingalStrength = ci.getCellSignalStrength().getDbm();
+                    signalStrengthTxt.setText("LTE Signal : " + LTESingalStrength + "dBm");
+
+                    LTESignal = LTESingalStrength + "dBm";
+
+//                    Log.e("signallsss ", "LTE signal  " + ci.getCellSignalStrength().getDbm());
+                    /*if (!merlin.isConnected()) {
+                        finish();
+                        startActivity(new Intent(CallActivity.this, AppRTCMainActivity.class));
+                    }*/
+                }
+            }
+           /* if (LTESingalStrength <= 0 && LTESingalStrength >= -110) {
+//                LTESignal = "Very Good";
+                LTESignal = LTESingalStrength + "dBm";
+            } else if (LTESingalStrength < -50 && LTESingalStrength >= -70) {
+                LTESignal = "Good";
+            } else if (LTESingalStrength < -70 && LTESingalStrength >= -80) {
+                LTESignal = "Average";
+            } else if (LTESingalStrength < -80 && LTESingalStrength >= -90) {
+                LTESignal = "Low";
+            } else if (LTESingalStrength < -90 && LTESingalStrength >= -110) {
+                LTESignal = "Very Low";
+            } else {
+                LTESignal = "No Signal";
+                Log.e("OUT ", "LTE signal strength: " + LTESignal);
+            }*/
+        } catch (Exception e) {
+            Log.e("LTE_TAG", "Exception: " + e.toString());
+        }
     }
 
     @Override
@@ -401,6 +790,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             disconnectedFromOnDestroy = true;
         }
 
+        unregisterReceiver(mBatInfoTemp);
+        unregisterReceiver(mBatInfoReceiver);
         /*
          * Release the local audio and video tracks ensuring any memory allocated to audio
          * or video is freed.
@@ -777,7 +1168,6 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         return new Room.Listener() {
             @Override
             public void onConnected(Room room) {
-
                 localParticipant = room.getLocalParticipant();
                 videoStatusTextView.setText("Connected to " + room.getName());
                 setTitle(room.getName());
@@ -787,12 +1177,19 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     break;
                 }
                 dialog.dismiss();
+                showStats();
             }
 
             @Override
             public void onReconnecting(@NonNull Room room, @NonNull TwilioException twilioException) {
                 videoStatusTextView.setText("Reconnecting to " + room.getName());
                 reconnectingProgressBar.setVisibility(View.GONE);
+                Log.e(TAG, "onRecoonecting: " + twilioException.getExplanation());
+
+
+                if (statsDialog.isShowing()) {
+                    statsDialog.dismiss();
+                }
                 showQR();
             }
 
@@ -800,6 +1197,9 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             public void onReconnected(@NonNull Room room) {
                 videoStatusTextView.setText("Connected to " + room.getName());
                 reconnectingProgressBar.setVisibility(View.GONE);
+                Log.e(TAG, "onReconnected: ");
+
+                dialog.dismiss();
             }
 
             @Override
@@ -812,6 +1212,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
             @Override
             public void onDisconnected(Room room, TwilioException e) {
+                Log.e(TAG, "onDisconnected: " + e);
+
                 localParticipant = null;
                 videoStatusTextView.setText("Disconnected from " + room.getName());
                 reconnectingProgressBar.setVisibility(View.GONE);
@@ -826,6 +1228,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     showQR();
                 }
             }
+
             @Override
             public void onParticipantConnected(Room room, RemoteParticipant remoteParticipant) {
                 addRemoteParticipant(remoteParticipant);
@@ -834,6 +1237,10 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             @Override
             public void onParticipantDisconnected(Room room, RemoteParticipant remoteParticipant) {
                 removeRemoteParticipant(remoteParticipant);
+                Log.e(TAG, "onParticipantDisconnected: " + room);
+                if (!dialog.isShowing()) {
+                    showQR();
+                }
             }
 
             @Override
@@ -854,6 +1261,22 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 Log.d(TAG, "onRecordingStopped");
             }
         };
+    }
+
+    private boolean checkPlayServices() {
+        GoogleApiAvailability apiAvailability = GoogleApiAvailability.getInstance();
+        int resultCode = apiAvailability.isGooglePlayServicesAvailable(this);
+        if (resultCode != ConnectionResult.SUCCESS) {
+            if (apiAvailability.isUserResolvableError(resultCode)) {
+                apiAvailability.getErrorDialog(this, resultCode, 111)
+                        .show();
+            } else {
+                Log.e(TAG, "This device is not supported.");
+                finish();
+            }
+            return false;
+        }
+        return true;
     }
 
     @SuppressLint("SetTextI18n")
@@ -1270,5 +1693,25 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     public void getRoomId(String roomId, String token) {
         Log.e(TAG, "getRoomId: " + roomId + " \n token =" + token);
         connectToRoom(roomId, token);
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+
+    }
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {
+
+    }
+
+    @Override
+    public void onProviderEnabled(String provider) {
+
+    }
+
+    @Override
+    public void onProviderDisabled(String provider) {
+
     }
 }

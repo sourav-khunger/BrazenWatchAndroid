@@ -33,7 +33,6 @@ public class JWTUtils {
             //Error
         }
     }
-
     private static String getJson(String strEncoded) throws UnsupportedEncodingException {
         byte[] decodedBytes = Base64.decode(strEncoded, Base64.URL_SAFE);
         return new String(decodedBytes, "UTF-8");
