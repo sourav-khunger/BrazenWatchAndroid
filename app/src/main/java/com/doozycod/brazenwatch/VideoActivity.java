@@ -77,12 +77,21 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.firebase.iid.FirebaseInstanceId;
 import com.google.firebase.iid.InstanceIdResult;
+import com.google.gson.JsonObject;
 import com.google.zxing.WriterException;
 import com.karumi.dexter.Dexter;
 import com.karumi.dexter.MultiplePermissionsReport;
 import com.karumi.dexter.PermissionToken;
 import com.karumi.dexter.listener.PermissionRequest;
 import com.karumi.dexter.listener.multi.MultiplePermissionsListener;
+import com.koushikdutta.async.future.FutureCallback;
+import com.koushikdutta.ion.Ion;
+import com.twilio.chat.CallbackListener;
+import com.twilio.chat.Channel;
+import com.twilio.chat.ChatClient;
+import com.twilio.chat.ErrorInfo;
+import com.twilio.chat.Message;
+import com.twilio.chat.StatusListener;
 import com.twilio.video.AudioCodec;
 import com.twilio.video.CameraCapturer;
 import com.twilio.video.CameraCapturer.CameraSource;
@@ -114,6 +123,9 @@ import com.twilio.video.VideoView;
 import com.twilio.video.Vp8Codec;
 import com.twilio.video.Vp9Codec;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.Timer;
@@ -140,6 +152,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
      */
     private static final String LOCAL_AUDIO_TRACK_NAME = "mic";
     private static final String LOCAL_VIDEO_TRACK_NAME = "camera";
+    public static final String SERVER_TOKEN_URL = "https://straw-walrus-2048.twil.io/chat_token";
     /*
      * You must provide a Twilio Access Token to connect to the Video service
      */
@@ -151,7 +164,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
      * or the request to the token server.
      */
     private String accessToken;
-
+    String lastLat = "0.0";
+    String lastLong = "0.0";
     /*
      * A Room represents communication between a local participant and one or more participants.
      */
@@ -164,6 +178,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
      */
     private AudioCodec audioCodec;
     private VideoCodec videoCodec;
+    static String DEFAULT_CHANNEL_NAME = "general";
 
     /*
      * Encoding parameters represent the sender side bandwidth constraints.
@@ -181,6 +196,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
      * Android shared preferences used for settings
      */
     private SharedPreferences preferences;
+    boolean isNetworkEnabled = false;
+    Location location;
 
     /*
      * Android application UI elements
@@ -225,6 +242,21 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     WifiManager wifiManager;
     List<ScanResult> getWifiSSIDs;
     WifiInfo wifiInfo;
+    AccessTokenFetcher accessTokenFetcher;
+    private ChatClientManager clientManager;
+    // Update this identity for each individual user, for instance after they login
+    private String mIdentity = "CHAT_USER";
+
+//  private RecyclerView mMessagesRecyclerView;
+//  private MessagesAdapter mMessagesAdapter;
+//  private ArrayList<Message> mMessages = new ArrayList<>();
+//
+//  private EditText mWriteMessageEditText;
+//  private Button mSendChatMessageButton;
+
+    private ChatClient mChatClient;
+
+    private Channel mGeneralChannel;
 
     public String generatePushToken() {
         FirebaseInstanceId.getInstance().getInstanceId()
@@ -263,6 +295,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         localVideoActionFab = findViewById(R.id.local_video_action_fab);
         muteActionFab = findViewById(R.id.mute_action_fab);
 
+        clientManager = TwilioChatApplication.get().getChatClientManager();
 
 //      device Id
         android_id = Settings.Secure.getString(this.getContentResolver(), Settings.Secure.ANDROID_ID);
@@ -287,6 +320,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         telephonyManager.listen(mListener, PhoneStateListener.LISTEN_SIGNAL_STRENGTHS);
 //        if (generatePushToken() == null) {
         generatePushToken();
+
+//        accessTokenFetcher = new AccessTokenFetcher(this);
         Dexter.withActivity(this).withPermissions(
                 Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
@@ -339,11 +374,276 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             setAccessToken();
         }
 
+    /*    accessTokenFetcher.fetch(new TaskCompletionListener<String, String>() {
+            @Override
+            public void onSuccess(String token) {
+                Log.e(TAG, "onSuccess: "+token );
+//                createAccessManager(token);
+//                buildClient(token, listener);
+            }
+
+            @Override
+            public void onError(String message) {
+                Log.e(TAG, "onError: "+message );
+//                if (listener != null) {
+//                    listener.onError(message);
+//                }
+            }
+        });*/
         /*
          * Set the initial state of the UI
          */
         intializeUI();
+
+//        fetch Location
+        if (locationManager != null) {
+            isNetworkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            if (isNetworkEnabled) {
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 10000, 10, this);
+                location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (location != null) {
+                    lastLat = location.getLatitude() + "";
+                    lastLong = location.getLongitude() + "";
+                }
+            } else {
+                location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                if (location != null) {
+                    lastLat = location.getLatitude() + "";
+                    lastLong = location.getLongitude() + "";
+                }
+            }
+        }
+
     }
+
+    private void retrieveAccessTokenfromServer() {
+        String deviceId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+        String tokenURL = SERVER_TOKEN_URL + "?device=" + deviceId + "&identity=" + deviceId;
+        Ion.with(this)
+                .load(tokenURL)
+                .asJsonObject()
+                .setCallback(new FutureCallback<JsonObject>() {
+                    @Override
+                    public void onCompleted(Exception e, JsonObject result) {
+                        if (e == null) {
+                            String accessToken = result.get("token").getAsString();
+
+                            Log.e(TAG, "Retrieved access token from server: " + accessToken);
+
+//                            setTitle(mIdentity);
+
+                            ChatClient.Properties.Builder builder = new ChatClient.Properties.Builder();
+                            ChatClient.Properties props = builder.createProperties();
+                            ChatClient.create(VideoActivity.this, accessToken, props, mChatClientCallback);
+
+                        } else {
+                            Log.e(TAG, e.getMessage(), e);
+                            Toast.makeText(VideoActivity.this,
+                                    R.string.error_retrieving_access_token, Toast.LENGTH_SHORT)
+                                    .show();
+                        }
+                    }
+                });
+    }
+
+    private void loadChannels() {
+        DEFAULT_CHANNEL_NAME = android_id;
+        mChatClient.getChannels().getChannel(DEFAULT_CHANNEL_NAME, new CallbackListener<Channel>() {
+            @Override
+            public void onSuccess(Channel channel) {
+                if (channel != null) {
+                    Log.e(TAG, "Joining Channel: Load " + DEFAULT_CHANNEL_NAME);
+                    Log.e(TAG, "Joining Channel: Load getStatus" + channel.getStatus());
+
+                    if (channel.getStatus() == Channel.ChannelStatus.JOINED) {
+                        // already in the channel, load the messages
+                    } else {
+                        // join the channel
+                        joinChannel(channel);
+
+                    }
+                } else {
+                    Log.e(TAG, "Creating Channel: " + DEFAULT_CHANNEL_NAME);
+
+                   /* mChatClient.getChannels().channelBuilder().withFriendlyName(DEFAULT_CHANNEL_NAME)
+                            .withType(Channel.ChannelType.PUBLIC)
+                            .build(new CallbackListener<Channel>() {
+                                @Override
+                                public void onSuccess(Channel channel) {
+                                    if (channel != null) {
+                                        Log.e(TAG, "Success creating channel");
+                                    }
+                                }
+
+                                @Override
+                                public void onError(ErrorInfo errorInfo) {
+                                    Log.e(TAG, "Error creating channel: " + errorInfo.getMessage());
+                                }
+                            });*/
+                    mChatClient.getChannels().createChannel(DEFAULT_CHANNEL_NAME,
+                            Channel.ChannelType.PUBLIC, new CallbackListener<Channel>() {
+                                @Override
+                                public void onSuccess(Channel channel) {
+                                    if (channel != null) {
+                                        Log.e(TAG, "Joining Channel: else" + DEFAULT_CHANNEL_NAME);
+                                        joinChannel(channel);
+                                    }
+                                }
+
+                                @Override
+                                public void onError(ErrorInfo errorInfo) {
+                                    Log.e(TAG, "Error creating channel: " + errorInfo.getMessage());
+                                }
+                            });
+                }
+            }
+
+            @Override
+            public void onError(ErrorInfo errorInfo) {
+                Log.e(TAG, "Error retrieving channel: " + errorInfo.getMessage());
+                mChatClient.getChannels().createChannel(android_id, Channel.ChannelType.PUBLIC, new CallbackListener<Channel>() {
+                    @Override
+                    public void onSuccess(Channel channel) {
+                        if (channel != null) {
+//                            joinChannel(channel);
+                        }
+                        Log.e(TAG, "onSuccess: " + channel.getUniqueName());
+                    }
+
+                    @Override
+                    public void onError(ErrorInfo errorInfo) {
+                        Log.e(TAG, "Error creating channel: " + errorInfo.getMessage());
+                    }
+                });
+            }
+
+        });
+
+    }
+
+    public void sendMessage() {
+
+
+//        textField.setText("");
+        JSONObject jsonObject = new JSONObject();
+        try {
+//            jsonObject.put("username", Username);
+            jsonObject.put("latitute", lastLat);
+            jsonObject.put("longitute", lastLong);
+            jsonObject.put("batteryLevel", batLevel);
+            jsonObject.put("batteryTemp", batteryTemperature);
+            jsonObject.put("networkSignal", LTESignal);
+            jsonObject.put("wifiSignal", wifiSignalLevel);
+            jsonObject.put("device_id", android_id);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        Message.Options messageOptions = Message.options().withBody(jsonObject.toString());
+        mGeneralChannel.getMessages().sendMessage(messageOptions, new CallbackListener<Message>() {
+            @Override
+            public void onSuccess(Message message) {
+                VideoActivity.this.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        // need to modify user interface elements on the UI thread
+                        Log.e(TAG, "run: cleared " + message.getMessages().getLastConsumedMessageIndex());
+
+                    }
+                });
+            }
+        });
+    }
+
+    private void joinChannel(final Channel channel) {
+        Log.d(TAG, "Joining Channel: join() " + channel.getFriendlyName());
+
+        channel.join(new StatusListener() {
+            @Override
+            public void onSuccess() {
+                mGeneralChannel = channel;
+                Log.e(TAG, "Joined default channel");
+//                mGeneralChannel.addListener(mDefaultChannelListener);
+                timer.scheduleAtFixedRate(new TimerTask() {
+
+                    @Override
+                    public void run() {
+
+                        runOnUiThread(new Runnable() {
+
+                            @Override
+                            public void run() {
+                                // Stuff that updates the UI
+
+//                                tv_bat_lvl.setText(batLevel);
+//                                tv_bat_temp.setText(batteryTemperature);
+//                                tv_wifi_signal.setText(wifiSignalLevel);
+//                                if (LTESignal == null) {
+//                                    LTESignal = "No Signal";
+//                                    tv_net_signal.setText(LTESignal);
+//                                } else {
+//                                    tv_net_signal.setText(LTESignal);
+//                                }
+                                sendMessage();
+                            }
+                        });
+                    }
+
+                }, 0, interval);
+
+            }
+
+            @Override
+            public void onError(ErrorInfo errorInfo) {
+                Log.e(TAG, "Error joining channel: onError() " + errorInfo.getMessage());
+//                Log.e(TAG, "onError: "+channel.getMembers(). );
+                Log.e(TAG, "onError: Get Channel Members " + channel.getUniqueName());
+
+                if (errorInfo.getMessage().contains("Member already exists")) {
+                    leaveChannel(channel);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            joinChannel(channel);
+
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void leaveChannel(final Channel channel) {
+        Log.e(TAG, "Leaving Channel: " + channel.getFriendlyName());
+
+        channel.leave(new StatusListener() {
+            @Override
+            public void onSuccess() {
+                mGeneralChannel = channel;
+                Log.e(TAG, "Leaving default channel");
+//
+            }
+
+            @Override
+            public void onError(ErrorInfo errorInfo) {
+                Log.e(TAG, "Error Leaving channel: " + errorInfo.getMessage());
+            }
+        });
+    }
+
+    private CallbackListener<ChatClient> mChatClientCallback =
+            new CallbackListener<ChatClient>() {
+                @Override
+                public void onSuccess(ChatClient chatClient) {
+                    mChatClient = chatClient;
+                    loadChannels();
+                    Log.d(TAG, "Success creating Twilio Chat Client");
+                }
+
+                @Override
+                public void onError(ErrorInfo errorInfo) {
+                    Log.e(TAG, "Error creating Twilio Chat Client: " + errorInfo.getMessage());
+                }
+            };
 
     private void displayLocationSettingsRequest(Context context) {
         GoogleApiClient googleApiClient = new GoogleApiClient.Builder(context)
@@ -453,6 +753,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 return keyCode == KeyEvent.KEYCODE_BACK;
             }
         });
+
         timer.scheduleAtFixedRate(new TimerTask() {
 
             @Override
@@ -636,7 +937,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 Log.e("OUT ", "LTE signal strength: " + LTESignal);
             }*/
         } catch (Exception e) {
-            Log.e("LTE_TAG", "Exception: " + e.toString());
+//            Log.e("LTE_TAG", "Exception: " + e.toString());
         }
     }
 
@@ -789,7 +1090,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             room.disconnect();
             disconnectedFromOnDestroy = true;
         }
-
+        leaveChannel(mGeneralChannel);
         unregisterReceiver(mBatInfoTemp);
         unregisterReceiver(mBatInfoReceiver);
         /*
@@ -1106,7 +1407,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
     private void moveLocalVideoToThumbnailView() {
         if (thumbnailVideoView.getVisibility() == View.GONE) {
-            thumbnailVideoView.setVisibility(View.VISIBLE);
+//            thumbnailVideoView.setVisibility(View.VISIBLE);
             localVideoTrack.removeRenderer(primaryVideoView);
             localVideoTrack.addRenderer(thumbnailVideoView);
             localVideoView = thumbnailVideoView;
@@ -1149,7 +1450,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
     private void moveLocalVideoToPrimaryView() {
         if (thumbnailVideoView.getVisibility() == View.VISIBLE) {
-            thumbnailVideoView.setVisibility(View.GONE);
+//            thumbnailVideoView.setVisibility(View.GONE);
             if (localVideoTrack != null) {
                 localVideoTrack.removeRenderer(thumbnailVideoView);
                 localVideoTrack.addRenderer(primaryVideoView);
@@ -1176,8 +1477,10 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     addRemoteParticipant(remoteParticipant);
                     break;
                 }
-                dialog.dismiss();
                 showStats();
+//                dialog.dismiss();
+                retrieveAccessTokenfromServer();
+
             }
 
             @Override
@@ -1186,11 +1489,10 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 reconnectingProgressBar.setVisibility(View.GONE);
                 Log.e(TAG, "onRecoonecting: " + twilioException.getExplanation());
 
-
+                showQR();
                 if (statsDialog.isShowing()) {
                     statsDialog.dismiss();
                 }
-                showQR();
             }
 
             @Override
@@ -1237,10 +1539,17 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             @Override
             public void onParticipantDisconnected(Room room, RemoteParticipant remoteParticipant) {
                 removeRemoteParticipant(remoteParticipant);
-                Log.e(TAG, "onParticipantDisconnected: " + room);
-                if (!dialog.isShowing()) {
+                Log.e(TAG, "onParticipantDisconnected: " + remoteParticipant.getIdentity());
+//                if (!dialog.isShowing()) {
                     showQR();
+//                    timer.cancel();
+                leaveChannel(mGeneralChannel);
+                    statsDialog.dismiss();
+//                }
+                if (room != null) {
+                    room.disconnect();
                 }
+
             }
 
             @Override
@@ -1697,12 +2006,19 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
     @Override
     public void onLocationChanged(Location location) {
-
+        lastLat = location.getLatitude() + "";
+        lastLong = location.getLongitude() + "";
     }
 
+    @SuppressLint("MissingPermission")
     @Override
     public void onStatusChanged(String provider, int status, Bundle extras) {
-
+        if (locationManager != null) {
+            location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            /*if (location != null) {
+                sendMessage(location.getLatitude() + "", location.getLongitude() + "", batteryTemperature, batLevel, LTESignal, wifiSignalLevel);
+            }*/
+        }
     }
 
     @Override

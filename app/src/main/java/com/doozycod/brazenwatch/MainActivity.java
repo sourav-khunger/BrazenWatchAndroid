@@ -16,9 +16,11 @@ import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.iid.FirebaseInstanceId;
 import com.google.firebase.iid.InstanceIdResult;
+import com.twilio.video.ConnectOptions;
 import com.twilio.video.RemoteParticipant;
 import com.twilio.video.Room;
 import com.twilio.video.TwilioException;
+import com.twilio.video.Video;
 
 import static com.doozycod.brazenwatch.MyFirebaseMessagingService.setTokenInterface;
 
@@ -34,7 +36,7 @@ public class MainActivity extends AppCompatActivity {
         android_id = Settings.Secure.getString(this.getContentResolver(),
                 Settings.Secure.ANDROID_ID);
         Log.e("faf", "onCreate: " + android_id);
-//        generatePushToken();
+        generatePushToken();
     }
 
     public String generatePushToken() {

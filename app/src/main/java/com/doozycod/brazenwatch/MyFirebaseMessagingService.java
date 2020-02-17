@@ -36,6 +36,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
 //            tokenInterface = this::onNewToken;
 //            Log.e(TAG, "Message data " + remoteMessage.getData());
 //            Log.e(TAG, "Message data jj" + remoteMessage.getData().get("message"));
+            if(tokenInterface !=null)
             tokenInterface.getToken(remoteMessage.getData().get("message"));
             sendNotification(remoteMessage);
         }
