@@ -141,7 +141,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     private static final int CAMERA_MIC_PERMISSION_REQUEST_CODE = 1;
     private static final String TAG = "VideoActivity";
     protected static final int REQUEST_CHECK_SETTINGS = 0x1;
-
+    RemoteParticipant remoteParticipant;
 
     /*
      * Audio and video tracks can be created with names. This feature is useful for categorizing
@@ -230,7 +230,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     android.app.Dialog dialog;
     android.app.Dialog statsDialog;
     private TelephonyManager telephonyManager;
-    Timer timer = new Timer();
+    Timer timer;
     private final int interval = 1000 * 60; // 60 Seconds
     int LTESingalStrength = 0;
     private String android_id;
@@ -535,6 +535,13 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             jsonObject.put("networkSignal", LTESignal);
             jsonObject.put("wifiSignal", wifiSignalLevel);
             jsonObject.put("device_id", android_id);
+
+            if(isConnected(VideoActivity.this)){
+                jsonObject.put("chargingStatus", "1");
+            }else{
+                jsonObject.put("chargingStatus", "0");
+
+            }
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -563,6 +570,9 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 mGeneralChannel = channel;
                 Log.e(TAG, "Joined default channel");
 //                mGeneralChannel.addListener(mDefaultChannelListener);
+//                sendMessage();
+
+                timer = new Timer();
                 timer.scheduleAtFixedRate(new TimerTask() {
 
                     @Override
@@ -613,7 +623,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     }
 
     private void leaveChannel(final Channel channel) {
-        Log.e(TAG, "Leaving Channel: " + channel.getFriendlyName());
+//        Log.e(TAG, "Leaving Channel: " + channel.g());
 
         channel.leave(new StatusListener() {
             @Override
@@ -754,7 +764,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             }
         });
 
-        timer.scheduleAtFixedRate(new TimerTask() {
+        new Timer().scheduleAtFixedRate(new TimerTask() {
 
             @Override
             public void run() {
@@ -764,7 +774,6 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     @Override
                     public void run() {
                         // Stuff that updates the UI
-
                         tv_bat_lvl.setText(batLevel);
                         tv_bat_temp.setText(batteryTemperature);
                         tv_wifi_signal.setText(wifiSignalLevel);
@@ -774,12 +783,16 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                         } else {
                             tv_net_signal.setText(LTESignal);
                         }
-
                     }
                 });
             }
 
         }, 0, interval);
+    }
+    public boolean isConnected(Context context) {
+        Intent intent = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        int plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1);
+        return plugged == BatteryManager.BATTERY_PLUGGED_AC || plugged == BatteryManager.BATTERY_PLUGGED_USB || plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS;
     }
 
     //    get wifi list to connect server to same network
@@ -1130,7 +1143,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             try {
                 bitmap = qrgEncoder.encodeAsBitmap();
                 dialog.setContentView(R.layout.show_qr_dialog);
-//                signalStrengthTxt = dialog.findViewById(R.id.lteSignals);
+                signalStrengthTxt = dialog.findViewById(R.id.lteSignals);
 //                setversionCode = dialog.findViewById(R.id.vercode);
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 ImageView QR_img = dialog.findViewById(R.id.QR_img);
@@ -1423,6 +1436,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     private void removeRemoteParticipant(RemoteParticipant remoteParticipant) {
         videoStatusTextView.setText("RemoteParticipant " + remoteParticipant.getIdentity() +
                 " left.");
+        remoteParticipantIdentity="";
         if (!remoteParticipant.getIdentity().equals(remoteParticipantIdentity)) {
             return;
         }
@@ -1515,7 +1529,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             @Override
             public void onDisconnected(Room room, TwilioException e) {
                 Log.e(TAG, "onDisconnected: " + e);
-
+        if(remoteParticipantIdentity.equals("")){
                 localParticipant = null;
                 videoStatusTextView.setText("Disconnected from " + room.getName());
                 reconnectingProgressBar.setVisibility(View.GONE);
@@ -1528,7 +1542,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 }
                 if (!dialog.isShowing()) {
                     showQR();
-                }
+                }}
             }
 
             @Override
@@ -1541,10 +1555,10 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 removeRemoteParticipant(remoteParticipant);
                 Log.e(TAG, "onParticipantDisconnected: " + remoteParticipant.getIdentity());
 //                if (!dialog.isShowing()) {
-                    showQR();
-//                    timer.cancel();
+                showQR();
+                timer.cancel();
                 leaveChannel(mGeneralChannel);
-                    statsDialog.dismiss();
+                statsDialog.dismiss();
 //                }
                 if (room != null) {
                     room.disconnect();
