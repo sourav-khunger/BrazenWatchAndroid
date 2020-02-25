@@ -48,6 +48,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
@@ -232,7 +233,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     private final int interval = 1000 * 60; // 60 Seconds
     int LTESingalStrength = 0;
     private String android_id;
-    private String batLevel, batteryTemperature, wifiSignalLevel, LTESignal;
+    private String batLevel, batteryTemperature, wifiSignalLevel, LTESignal = "";
     TextView tv_bat_lvl, tv_bat_temp, tv_wifi_signal, tv_net_signal, versioncode, setversionCode, signalStrengthTxt, signalStrengthTxtqr;
     protected LocationManager locationManager;
     String ssid;
@@ -240,11 +241,11 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     WifiManager wifiManager;
     List<ScanResult> getWifiSSIDs;
     WifiInfo wifiInfo;
+    LinearLayout connection_state;
+
     //    AccessTokenFetcher accessTokenFetcher;
 //    private ChatClientManager clientManager;
     // Update this identity for each individual user, for instance after they login
-    private String mIdentity = "CHAT_USER";
-
     public String generatePushToken() {
         FirebaseInstanceId.getInstance().getInstanceId()
                 .addOnCompleteListener(new OnCompleteListener<InstanceIdResult>() {
@@ -525,7 +526,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
     public boolean isInternetAvailable() {
         try {
             InetAddress ipAddr = InetAddress.getByName("google.com");
-            Log.e(TAG, "isInternetAvailable: " + ipAddr.getHostName());
+//            Log.e(TAG, "isInternetAvailable: " + ipAddr.getHostName());
             //You can replace it with your name
             return !ipAddr.equals("");
 
@@ -538,7 +539,7 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
 
     public void sendMessage() {
 
-
+        getLTEsignalStrength();
 //        textField.setText("");
         JSONObject jsonObject = new JSONObject();
         try {
@@ -547,7 +548,18 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
             jsonObject.put("longitute", lastLong);
             jsonObject.put("batteryLevel", batLevel);
             jsonObject.put("batteryTemp", batteryTemperature);
-            jsonObject.put("networkSignal", LTESignal);
+            if (LTESingalStrength != 0) {
+                jsonObject.put("networkSignal", LTESingalStrength + " dBm");
+                Log.e(TAG, "sendMessage: (" + LTESingalStrength + ")");
+
+
+            } else {
+                jsonObject.put("networkSignal", "No Signal");
+                Log.e(TAG, "sendMessage:1 (" + LTESingalStrength + ")");
+
+            }
+
+//            jsonObject.put("networkSignal", LTESingalStrength + " dBm");
             jsonObject.put("wifiSignal", wifiSignalLevel);
             jsonObject.put("device_id", android_id);
 
@@ -769,14 +781,19 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         tv_bat_temp = statsDialog.findViewById(R.id.batTempsocket);
         tv_net_signal = statsDialog.findViewById(R.id.networksignalsocket);
         versioncode = statsDialog.findViewById(R.id.versioncode);
+        connection_state = statsDialog.findViewById(R.id.connection_state);
         tv_wifi_signal = statsDialog.findViewById(R.id.wifisignalsocket);
         statsDialog.show();
         versioncode.setText("v" + BuildConfig.VERSION_CODE);
         tv_bat_lvl.setText(batLevel);
         tv_bat_temp.setText(batteryTemperature);
         tv_wifi_signal.setText(wifiSignalLevel);
-        tv_net_signal.setText(LTESignal);
+        if (LTESingalStrength != 0) {
+            tv_net_signal.setText(LTESingalStrength + " dBm");
 
+        } else {
+            tv_net_signal.setText("No Signal");
+        }
         statsDialog.setOnKeyListener(new DialogInterface.OnKeyListener() {
             @Override
             public boolean onKey(DialogInterface dialog, int keyCode, KeyEvent event) {
@@ -798,12 +815,12 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                         tv_bat_lvl.setText(batLevel);
                         tv_bat_temp.setText(batteryTemperature);
                         tv_wifi_signal.setText(wifiSignalLevel);
-                        if (LTESignal == null) {
-                            LTESignal = "No Signal";
-                            tv_net_signal.setText(LTESignal);
-                        } else {
-                            tv_net_signal.setText(LTESignal);
-                        }
+//                        if (LTESignal == null) {
+//                            LTESignal = "No Signal";
+//                            tv_net_signal.setText(LTESignal);
+//                        } else {
+//                            tv_net_signal.setText(LTESignal);
+//                        }
                     }
                 });
             }
@@ -931,6 +948,8 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
         public void onReceive(Context ctxt, Intent intent) {
             temp = ((float) intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)) / 10;
             batteryTemperature = temp + " C";
+            getLTEsignalStrength();
+
 
         }
     };
@@ -945,33 +964,19 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     CellInfoLte ci = (CellInfoLte) cellInfo;
                     Log.d("LTE TAG", "LTE signal strength: " + ci.getCellSignalStrength().getDbm());
                     LTESingalStrength = ci.getCellSignalStrength().getDbm();
-                    signalStrengthTxtqr.setText("LTE Signal : " + LTESingalStrength + "dBm");
-                    signalStrengthTxt.setText("LTE Signal : " + LTESingalStrength + "dBm");
+                    if (LTESingalStrength != 0) {
+                        signalStrengthTxtqr.setText(LTESingalStrength + " dBm");
+                        signalStrengthTxt.setText(LTESingalStrength + " dBm");
+                        tv_net_signal.setText(LTESingalStrength + " dBm");
+                    } else {
+                        signalStrengthTxtqr.setText("No Signal");
+                        signalStrengthTxt.setText("No Signal");
+                        tv_net_signal.setText("No Signal");
+                    }
 
-                    LTESignal = LTESingalStrength + "dBm";
-
-//                    Log.e("signallsss ", "LTE signal  " + ci.getCellSignalStrength().getDbm());
-                    /*if (!merlin.isConnected()) {
-                        finish();
-                        startActivity(new Intent(CallActivity.this, AppRTCMainActivity.class));
-                    }*/
                 }
             }
-           /* if (LTESingalStrength <= 0 && LTESingalStrength >= -110) {
-//                LTESignal = "Very Good";
-                LTESignal = LTESingalStrength + "dBm";
-            } else if (LTESingalStrength < -50 && LTESingalStrength >= -70) {
-                LTESignal = "Good";
-            } else if (LTESingalStrength < -70 && LTESingalStrength >= -80) {
-                LTESignal = "Average";
-            } else if (LTESingalStrength < -80 && LTESingalStrength >= -90) {
-                LTESignal = "Low";
-            } else if (LTESingalStrength < -90 && LTESingalStrength >= -110) {
-                LTESignal = "Very Low";
-            } else {
-                LTESignal = "No Signal";
-                Log.e("OUT ", "LTE signal strength: " + LTESignal);
-            }*/
+
         } catch (Exception e) {
 //            Log.e("LTE_TAG", "Exception: " + e.toString());
         }
@@ -1177,7 +1182,12 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 QR_img.setImageBitmap(bitmap);
                 dialog.show();
                 getLTEsignalStrength();
+                if (LTESingalStrength != 0) {
+                    signalStrengthTxtqr.setText(LTESingalStrength + " dBm");
+                } else {
+                    signalStrengthTxtqr.setText("No Signal");
 
+                }
 //                setversionCode.setText("v" + BuildConfig.VERSION_CODE);
 
                 dialog.setOnKeyListener(new DialogInterface.OnKeyListener() {
@@ -1537,7 +1547,9 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                     }
 
                 }, 0, interval);
-
+                if (connection_state != null) {
+                    connection_state.setVisibility(View.GONE);
+                }
                 showStats();
 //                dialog.dismiss();
 
@@ -1548,7 +1560,10 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 videoStatusTextView.setText("Reconnecting to " + room.getName());
                 reconnectingProgressBar.setVisibility(View.GONE);
                 Log.e(TAG, "onReconnecting: " + twilioException.getExplanation());
-                Toast.makeText(VideoActivity.this, "Reconnecting...", Toast.LENGTH_SHORT).show();
+                Toast.makeText(VideoActivity.this, "Reconnecting...", Toast.LENGTH_LONG).show();
+                if (connection_state != null) {
+                    connection_state.setVisibility(View.VISIBLE);
+                }
                 if (isInternetAvailable()) {
                     showStats();
                 } else {
@@ -1567,6 +1582,10 @@ public class VideoActivity extends AppCompatActivity implements OnTokenReceive, 
                 videoStatusTextView.setText("Connected to " + room.getName());
                 reconnectingProgressBar.setVisibility(View.GONE);
                 Log.e(TAG, "onReconnected: ");
+                if (connection_state != null) {
+
+                    connection_state.setVisibility(View.GONE);
+                }
                 showStats();
             }
 

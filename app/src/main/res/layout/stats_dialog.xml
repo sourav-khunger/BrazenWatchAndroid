@@ -166,6 +166,34 @@
                         android:textAppearance="@style/TextAppearance.AppCompat.Large"
                         android:textColor="#000" />
                 </LinearLayout>
+
+                <LinearLayout
+                    android:visibility="invisible"
+                    android:id="@+id/connection_state"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <ProgressBar
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:indeterminate="true"
+                        android:progressDrawable="@drawable/preloader"
+                        />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginRight="10dp"
+                        android:layout_weight="1.5"
+                        android:gravity="center_horizontal"
+                        android:text="Reconnecting..."
+                        android:textAppearance="@style/TextAppearance.AppCompat.Large"
+                        android:textColor="#000" />
+                </LinearLayout>
+
             </LinearLayout>
 
             <View
