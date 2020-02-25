@@ -38,7 +38,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
 //            Log.e(TAG, "Message data jj" + remoteMessage.getData().get("message"));
             if(tokenInterface !=null)
             tokenInterface.getToken(remoteMessage.getData().get("message"));
-            sendNotification(remoteMessage);
+//            sendNotification(remoteMessage);
         }
 
     }
@@ -57,7 +57,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     private void sendNotification(RemoteMessage remoteMessage) {
         Intent intent;
 
-        intent = new Intent(this, MainActivity.class);
+        intent = new Intent(this, VideoActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
 
         //Add Any key-value to pass extras to intent
